@@ -24,11 +24,14 @@ type PetPayload = record {
   pet_name : text;
   pet_color : text;
 };
-type Result = variant { Ok : Pet; Err : Error };
+type Result = variant { Ok : text; Err : Error };
+type Result_1 = variant { Ok : Pet; Err : Error };
 service : {
+  delete_pet : (nat64) -> (Result);
   get_all_pets : () -> (vec Pet) query;
   get_pet : (nat64) -> (opt Pet) query;
   register_pet : (PetPayload) -> (opt Pet);
-  report_found_pet : (nat64, FoundPetReportPayload) -> (Result);
-  report_lost_pet : (nat64, text) -> (Result);
+  report_found_pet : (nat64, FoundPetReportPayload) -> (Result_1);
+  report_lost_pet : (nat64, text) -> (Result_1);
+  update_pet_info : (nat64, PetPayload) -> (Result_1);
 }
