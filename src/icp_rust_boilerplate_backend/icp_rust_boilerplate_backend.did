@@ -1,3 +1,34 @@
+type Error = variant {
+  NotFound : record { msg : text };
+  NotAuthorized : record { msg : text };
+};
+type FoundPetReportPayload = record {
+  finder_name : text;
+  found_location : text;
+};
+type Pet = record {
+  id : nat64;
+  is_lost : bool;
+  updated_at : opt nat64;
+  lost_location : opt text;
+  owner : text;
+  pet_breed : text;
+  created_at : nat64;
+  pet_photo : text;
+  pet_name : text;
+  pet_color : text;
+};
+type PetPayload = record {
+  pet_breed : text;
+  pet_photo : text;
+  pet_name : text;
+  pet_color : text;
+};
+type Result = variant { Ok : Pet; Err : Error };
 service : {
-    "greet": (text) -> (text) query;
+  get_all_pets : () -> (vec Pet) query;
+  get_pet : (nat64) -> (opt Pet) query;
+  register_pet : (PetPayload) -> (opt Pet);
+  report_found_pet : (nat64, FoundPetReportPayload) -> (Result);
+  report_lost_pet : (nat64, text) -> (Result);
 }
