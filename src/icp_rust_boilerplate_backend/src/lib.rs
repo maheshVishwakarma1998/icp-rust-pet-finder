@@ -11,7 +11,7 @@ use ic_cdk::caller;
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 type IdCell = Cell<u64, Memory>;
 
-// Define the Pet struct with the necessary attributes for each pet.
+// Define the Pet struct
 #[derive(candid::CandidType, Clone, Serialize, Deserialize, Default)]
 struct Pet {
     id: u64,
@@ -26,8 +26,7 @@ struct Pet {
     updated_at: Option<u64>,
 }
 
-
-// Struct for FoundPetReport to track information about found pets
+// Define the FoundPetReport struct
 #[derive(candid::CandidType, Clone, Serialize, Deserialize, Default)]
 struct FoundPetReport {
     pet_id: u64,
@@ -86,7 +85,7 @@ thread_local! {
     ));
 }
 
-// Define payload for registering a pet
+// Define payloads
 #[derive(candid::CandidType, Serialize, Deserialize, Default)]
 struct PetPayload {
     pet_name: String,
@@ -95,25 +94,35 @@ struct PetPayload {
     pet_photo: String,
 }
 
-// Define payload for reporting a found pet
 #[derive(candid::CandidType, Serialize, Deserialize, Default)]
 struct FoundPetReportPayload {
     finder_name: String,
     found_location: String,
 }
 
-// Register a new pet to the registry
+// Define errors
+#[derive(candid::CandidType, Deserialize, Serialize)]
+enum Error {
+    NotFound { msg: String },
+    NotAuthorized { msg: String },
+    InvalidInput { msg: String },
+}
+
+// CRUD Operations
+
 #[ic_cdk::update]
-fn register_pet(payload: PetPayload) -> Option<Pet> {
-        // Increment the pet ID counter
-    let id = ID_COUNTER
-        .with(|counter| {
-            let current_value = *counter.borrow().get();
-            counter.borrow_mut().set(current_value + 1)
-        })
-        .expect("Cannot increment ID counter");
-    
-    // Create a new pet with the provided data
+fn register_pet(payload: PetPayload) -> Result<Pet, Error> {
+    if payload.pet_name.is_empty() || payload.pet_breed.is_empty() || payload.pet_color.is_empty() || payload.pet_photo.is_empty() {
+        return Err(Error::InvalidInput {
+            msg: "All fields in the payload must be non-empty".to_string(),
+        });
+    }
+
+    let id = ID_COUNTER.with(|counter| {
+        let current_value = *counter.borrow().get();
+        counter.borrow_mut().set(current_value + 1)
+    }).expect("Cannot increment ID counter");
+
     let pet = Pet {
         id,
         pet_name: payload.pet_name,
@@ -126,40 +135,53 @@ fn register_pet(payload: PetPayload) -> Option<Pet> {
         created_at: time(),
         updated_at: None,
     };
+
     do_insert_pet(&pet);
-    Some(pet)
+    Ok(pet)
 }
 
-
-// Report a pet as lost
 #[ic_cdk::update]
 fn report_lost_pet(id: u64, lost_location: String) -> Result<Pet, Error> {
-    match PET_STORAGE.with(|storage| storage.borrow().get(&id)) {
-        Some(mut pet) => {
+    if lost_location.is_empty() {
+        return Err(Error::InvalidInput {
+            msg: "Lost location must not be empty".to_string(),
+        });
+    }
+
+    PET_STORAGE.with(|storage| {
+        let mut storage = storage.borrow_mut();
+        if let Some(mut pet) = storage.get(&id) {
             if pet.owner != caller().to_string() {
                 return Err(Error::NotAuthorized {
-                    msg: "You are not the owner".to_string(),
+                    msg: "You are not the owner of this pet".to_string(),
                 });
             }
             pet.is_lost = true;
             pet.lost_location = Some(lost_location);
             pet.updated_at = Some(time());
-            do_insert_pet(&pet);
+            storage.insert(id, pet.clone());
             Ok(pet)
+        } else {
+            Err(Error::NotFound {
+                msg: format!("Pet with ID {} not found", id),
+            })
         }
-        None => Err(Error::NotFound {
-            msg: format!("Pet with id {} not found", id),
-        }),
-    }
+    })
 }
 
-// Report a found pet and update its status
 #[ic_cdk::update]
 fn report_found_pet(id: u64, payload: FoundPetReportPayload) -> Result<Pet, Error> {
-    match PET_STORAGE.with(|storage| storage.borrow().get(&id)) {
-        Some(mut pet) => {
+    if payload.finder_name.is_empty() || payload.found_location.is_empty() {
+        return Err(Error::InvalidInput {
+            msg: "Finder name and found location must be non-empty".to_string(),
+        });
+    }
+
+    PET_STORAGE.with(|storage| {
+        let mut storage = storage.borrow_mut();
+        if let Some(mut pet) = storage.get(&id) {
             if !pet.is_lost {
-                return Err(Error::NotAuthorized {
+                return Err(Error::InvalidInput {
                     msg: "Pet is not reported as lost".to_string(),
                 });
             }
@@ -169,21 +191,20 @@ fn report_found_pet(id: u64, payload: FoundPetReportPayload) -> Result<Pet, Erro
                 found_location: payload.found_location,
                 created_at: time(),
             };
-            FOUND_PET_STORAGE.with(|storage| storage.borrow_mut().insert(id, report));
+            FOUND_PET_STORAGE.with(|found_storage| found_storage.borrow_mut().insert(id, report));
             pet.is_lost = false;
             pet.lost_location = None;
             pet.updated_at = Some(time());
-            do_insert_pet(&pet);
+            storage.insert(id, pet.clone());
             Ok(pet)
+        } else {
+            Err(Error::NotFound {
+                msg: format!("Pet with ID {} not found", id),
+            })
         }
-        None => Err(Error::NotFound {
-            msg: format!("Pet with id {} not found", id),
-        }),
-    }
+    })
 }
 
-
-// Delete a pet from the registry
 #[ic_cdk::update]
 fn delete_pet(id: u64) -> Result<String, Error> {
     PET_STORAGE.with(|storage| {
@@ -204,10 +225,14 @@ fn delete_pet(id: u64) -> Result<String, Error> {
     })
 }
 
-
-// Update a pet by it's ID
 #[ic_cdk::update]
 fn update_pet_info(id: u64, payload: PetPayload) -> Result<Pet, Error> {
+    if payload.pet_name.is_empty() || payload.pet_breed.is_empty() || payload.pet_color.is_empty() || payload.pet_photo.is_empty() {
+        return Err(Error::InvalidInput {
+            msg: "All fields in the payload must be non-empty".to_string(),
+        });
+    }
+
     PET_STORAGE.with(|storage| {
         let mut storage = storage.borrow_mut();
         if let Some(mut pet) = storage.get(&id) {
@@ -231,32 +256,19 @@ fn update_pet_info(id: u64, payload: PetPayload) -> Result<Pet, Error> {
     })
 }
 
-
-// Retrieve all registered pets
 #[ic_cdk::query]
 fn get_all_pets() -> Vec<Pet> {
     PET_STORAGE.with(|storage| storage.borrow().iter().map(|(_, pet)| pet).collect())
 }
 
-// Retrieve a specific pet by ID
 #[ic_cdk::query]
 fn get_pet(id: u64) -> Option<Pet> {
     PET_STORAGE.with(|storage| storage.borrow().get(&id))
 }
 
-// Helper function to insert a pet into the storage
 fn do_insert_pet(pet: &Pet) {
     PET_STORAGE.with(|storage| storage.borrow_mut().insert(pet.id, pet.clone()));
 }
 
-
-// Define error types for handling errors in the system
-#[derive(candid::CandidType, Deserialize, Serialize)]
-enum Error {
-    NotFound { msg: String },
-    NotAuthorized { msg: String },
-}
-
 // Export candid
 ic_cdk::export_candid!();
-
